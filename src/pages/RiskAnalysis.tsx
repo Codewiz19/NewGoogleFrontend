@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import UploadRequired from "@/components/UploadRequired";
 import { 
   AlertTriangle, 
   ChevronDown,
@@ -7,63 +9,141 @@ import {
   ZoomIn,
   ZoomOut,
   ChevronLeft,
-  ChevronRight as ChevronRightIcon
+  ChevronRight as ChevronRightIcon,
+  Loader
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import RiskGauge from "@/components/dashboard/RiskGauge";
-// Note: We're using our own simple PDF implementation instead of react-pdf
+import { getCachedDocument, getCachedRisks, updateCachedDocument, getCurrentDocId } from "@/lib/documentCache";
+import API from "@/lib/api";
 
 const RiskAnalysis = () => {
+  const { doc_id: paramDocId } = useParams<{ doc_id?: string }>();
+  const navigate = useNavigate();
+  // Use doc_id from params or get from cache
+  const cachedDocId = getCurrentDocId();
+  const doc_id = paramDocId || cachedDocId;
+  const [risks, setRisks] = useState<any[]>([]);
+  const [riskScore, setRiskScore] = useState(0);
+  const [loading, setLoading] = useState(true);
   const [expandedFlags, setExpandedFlags] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
   const [zoom, setZoom] = useState(100);
 
-  const riskScore = 65;
+  useEffect(() => {
+    const fetchRisks = async () => {
+      if (!doc_id) {
+        setLoading(false);
+        return;
+      }
 
-  const redFlags = [
+      // Check cache first
+      const cachedRisks = getCachedRisks(doc_id);
+      if (cachedRisks && cachedRisks.length > 0) {
+        setRisks(cachedRisks);
+        calculateRiskScore(cachedRisks);
+        setLoading(false);
+        return;
+      }
+
+      // Fetch from API if not in cache
+      try {
+        setLoading(true);
+        const response = await fetch(API.getDocument(doc_id));
+        
+        if (response.ok) {
+          const documentData = await response.json();
+          if (documentData.risks && Array.isArray(documentData.risks)) {
+            setRisks(documentData.risks);
+            calculateRiskScore(documentData.risks);
+            // Cache the risks
+            updateCachedDocument(doc_id, {
+              risks: documentData.risks,
+              risks_generated_at: documentData.risks_generated_at
+            });
+          }
+        }
+      } catch (error) {
+        console.error("Error fetching risks:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRisks();
+  }, [doc_id]);
+
+  const calculateRiskScore = (riskArray: any[]) => {
+    if (!riskArray || riskArray.length === 0) {
+      setRiskScore(0);
+      return;
+    }
+    
+    const totalScore = riskArray.reduce((sum, risk) => {
+      return sum + (risk.severity_score || 0);
+    }, 0);
+    
+    const avgScore = Math.min(100, Math.round(totalScore / riskArray.length));
+    setRiskScore(avgScore);
+  };
+
+  // Redirect to URL with doc_id if we have cached doc_id but no param
+  useEffect(() => {
+    if (cachedDocId && !paramDocId) {
+      navigate(`/risk-analysis/${cachedDocId}`, { replace: true });
+    }
+  }, [cachedDocId, paramDocId, navigate]);
+
+  if (!doc_id) {
+    return <UploadRequired message="Please upload a document first to view the risk analysis." />;
+  }
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background neural-bg flex items-center justify-center">
+        <div className="text-center">
+          <Loader className="w-12 h-12 text-neon-blue animate-spin mx-auto mb-4" />
+          <p className="font-rajdhani text-xl text-muted-foreground">Loading risk analysis...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Get all unique page numbers from risks
+  const allPageNumbers = risks.length > 0 
+    ? [...new Set(risks.map(r => r.page_number || 1).filter(p => p > 0))]
+    : [1];
+  const maxPage = allPageNumbers.length > 0 ? Math.max(...allPageNumbers) : 1;
+
+  // Convert risks to redFlags format for display
+  const redFlags = risks.length > 0 ? risks.map((risk, index) => ({
+    id: risk.id || `risk-${index}`,
+    severity: risk.severity_level?.toLowerCase() || 'medium',
+    title: risk.short_risk || risk.label || `Risk ${index + 1}`,
+    originalText: risk.snippet || risk.original_text || '',
+    explanation: risk.explanation || 'Risk identified in document',
+    whyRisky: Array.isArray(risk.recommendations) ? risk.recommendations : 
+              (risk.recommendations ? [risk.recommendations] : ['Review this clause carefully']),
+    suggestedAction: Array.isArray(risk.recommendations) ? risk.recommendations[0] : 
+                     (risk.recommendations || 'Review this clause carefully'),
+    pageNumber: risk.page_number || 1,
+    pageText: risk.page_text || '',
+    highlightStart: risk.highlight_start || 0,
+    highlightEnd: risk.highlight_end || 0,
+    severityScore: risk.severity_score || 0
+  })) : [
     {
-      id: "unilateral-termination",
-      severity: "high",
-      title: "Unilateral Termination Rights",
-      originalText: "The Landlord may terminate this lease at any time with thirty (30) days written notice for any reason or no reason whatsoever, regardless of tenant compliance with lease terms.",
-      explanation: "This clause gives the landlord excessive power to end your tenancy without cause, providing little security of tenure.",
-      whyRisky: [
-        "No protection against arbitrary eviction",
-        "Landlord doesn't need cause to terminate",
-        "Creates housing insecurity for tenant"
-      ],
-      suggestedAction: "Negotiate for mutual termination rights or require 'just cause' for landlord termination",
-      pageNumber: 3
-    },
-    {
-      id: "excessive-fees",
-      severity: "medium",
-      title: "Excessive Administrative Fees",
-      originalText: "Tenant agrees to pay a $200 administrative fee for any lease modifications, $150 for late rent processing, and $100 for any maintenance requests deemed non-essential by Landlord.",
-      explanation: "These fees are unusually high and give the landlord discretionary power over what constitutes 'essential' maintenance.",
-      whyRisky: [
-        "Fees significantly above market standard",
-        "Subjective criteria for maintenance fees",
-        "Could discourage legitimate maintenance requests"
-      ],
-      suggestedAction: "Request fee schedule aligned with local standards and clear maintenance criteria",
-      pageNumber: 7
-    },
-    {
-      id: "broad-liability",
-      severity: "medium",
-      title: "Broad Tenant Liability Waiver",
-      originalText: "Tenant waives all claims against Landlord for any injuries, damages, or losses occurring on the premises, including but not limited to those caused by Landlord's negligence.",
-      explanation: "This waiver attempts to protect the landlord even from their own negligent actions, which may not be legally enforceable.",
-      whyRisky: [
-        "Attempts to waive landlord's basic legal responsibilities",
-        "May not be legally enforceable",
-        "Shifts inappropriate risk to tenant"
-      ],
-      suggestedAction: "Limit waiver to exclude landlord negligence and maintain basic safety obligations",
-      pageNumber: 12
+      id: "no-risks",
+      severity: "low",
+      title: "No Risks Identified",
+      originalText: "No significant risks were found in the document.",
+      explanation: "The document appears to be relatively safe based on the analysis.",
+      whyRisky: [],
+      suggestedAction: "Continue reviewing the document carefully",
+      pageNumber: 1
     }
   ];
+
 
   const toggleFlag = (flagId: string) => {
     setExpandedFlags(prev => 
@@ -209,15 +289,15 @@ const RiskAnalysis = () => {
                   <ChevronLeft size={16} />
                 </button>
                 <button 
-                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, 13))}
-                  disabled={currentPage >= 13}
+                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, maxPage))}
+                  disabled={currentPage >= maxPage}
                   className="p-2 bg-primary text-primary-foreground rounded-md disabled:opacity-50"
                 >
                   <ChevronRightIcon size={16} />
                 </button>
               </div>
               <div className="flex items-center">
-                <span className="mr-2">Page {currentPage} of 13</span>
+                <span className="mr-2">Page {currentPage} of {maxPage}</span>
                 <div className="flex gap-2">
                   <button 
                     onClick={() => setZoom(prev => Math.max(prev - 10, 50))}
@@ -235,79 +315,78 @@ const RiskAnalysis = () => {
               </div>
             </div>
             
-            <div className="border rounded-lg p-4 bg-muted/20 relative min-h-[600px] flex justify-center">
-              {/* Mock PDF page with highlighted text */}
+            <div className="border rounded-lg p-4 bg-muted/20 relative min-h-[600px] overflow-auto">
+              {/* Display actual PDF page text with highlighted risks */}
               <div 
-                className="bg-white shadow-md rounded"
-                style={{ 
-                  width: `${zoom * 6}px`, 
-                  height: `${zoom * 8}px`, 
-                  position: 'relative',
-                  overflow: 'hidden'
-                }}
+                className="bg-white shadow-md rounded p-6 prose max-w-none"
+                style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top left' }}
               >
-                {/* Page content */}
-                <div className="p-8 text-sm" style={{ fontSize: `${zoom/100 * 0.875}rem` }}>
-                  {currentPage === 3 && (
-                    <>
-                      <p className="mb-4">3. TERMINATION.</p>
-                      <p className={expandedFlags.includes("unilateral-termination") ? "bg-red-200 border-2 border-red-500 p-1" : ""}>
-                        The Landlord may terminate this lease at any time with thirty (30) days written
-                        notice for any reason or no reason whatsoever, regardless of tenant compliance with lease terms.
-                      </p>
-                      <p className="mt-4">4. DAMAGE DEPOSIT. Upon the due execution of this Agreement, Tenant shall deposit with Landlord
-                      the sum of TWO THOUSAND DOLLARS ($2,000.00) receipt of which is hereby acknowledged by
-                      Landlord, as security for any damage caused to the Premises during the term hereof. Such deposit
-                      shall be returned to Tenant, without interest, and less any set off for damages to the Premises
-                      upon the termination of this Agreement.</p>
-                    </>
-                  )}
+                {(() => {
+                  // Get current page text
+                  const currentPageRisks = redFlags.filter(r => r.pageNumber === currentPage);
+                  let pageText = '';
                   
-                  {currentPage === 7 && (
-                    <>
-                      <p className="mb-4">13. ADMINISTRATIVE FEES.</p>
-                      <p className={expandedFlags.includes("excessive-fees") ? "bg-red-200 border-2 border-red-500 p-1" : ""}>
-                        Tenant agrees to pay a $200 administrative fee for any lease
-                        modifications, $150 for late rent processing, and $100 for any maintenance requests deemed
-                        non-essential by Landlord.
-                      </p>
-                      <p className="mt-4">14. DAMAGE TO PREMISES. In the event the Premises are destroyed or rendered wholly
-                      uninhabitable by fire, storm, earthquake, or other casualty not caused by the negligence of
-                      Tenant, this Agreement shall terminate from such time except for the purpose of enforcing rights
-                      that may have then accrued hereunder.</p>
-                    </>
-                  )}
+                  // Try to get page text from first risk on this page
+                  if (currentPageRisks.length > 0 && currentPageRisks[0].pageText) {
+                    pageText = currentPageRisks[0].pageText;
+                  } else {
+                    // Fallback: get page text from any risk (if available)
+                    const anyRiskWithText = redFlags.find(r => r.pageText);
+                    pageText = anyRiskWithText?.pageText || '';
+                  }
                   
-                  {currentPage === 12 && (
-                    <>
-                      <p className="mb-4">22. LIABILITY WAIVER.</p>
-                      <p className={expandedFlags.includes("broad-liability") ? "bg-red-200 border-2 border-red-500 p-1" : ""}>
-                        Tenant waives all claims against Landlord for any injuries, damages, or
-                        losses occurring on the premises, including but not limited to those caused by Landlord's
-                        negligence.
-                      </p>
-                      <p className="mt-4">23. DEFAULT. If Tenant fails to comply with any of the material provisions of this Agreement,
-                      other than the covenant to pay rent, or of any present rules and regulations or any that may be
-                      hereafter prescribed by Landlord, or materially fails to comply with any duties imposed on Tenant
-                      by statute, within seven (7) days after delivery of written notice by Landlord specifying the
-                      non-compliance and indicating the intention of Landlord to terminate the Lease by reason thereof,
-                      Landlord may terminate this Agreement.</p>
-                    </>
-                  )}
+                  if (!pageText) {
+                    return (
+                      <div className="text-center text-muted-foreground py-12">
+                        <p>Page {currentPage} text not available.</p>
+                        <p className="text-sm mt-2">Risks identified: {currentPageRisks.length}</p>
+                      </div>
+                    );
+                  }
                   
-                  {![3, 7, 12].includes(currentPage) && (
-                    <div className="flex items-center justify-center h-full">
-                      <p className="text-gray-400">Page {currentPage} content</p>
-                      {getActiveFlag() && (
-                        <div className="absolute top-0 left-0 right-0 p-4 bg-yellow-100 border-b border-yellow-300">
-                          <p className="text-sm text-yellow-800">
-                            No risk flags on this page. Navigate to page {getActiveFlag().pageNumber} to see highlighted text.
+                  // Highlight risks in the text
+                  let displayText = pageText;
+                  const highlights: Array<{ start: number; end: number; severity: string }> = [];
+                  
+                  currentPageRisks.forEach(risk => {
+                    if (risk.highlightStart >= 0 && risk.highlightEnd > risk.highlightStart) {
+                      highlights.push({
+                        start: risk.highlightStart,
+                        end: risk.highlightEnd,
+                        severity: risk.severity
+                      });
+                    }
+                  });
+                  
+                  // Sort highlights by position (descending) to apply from end to start
+                  highlights.sort((a, b) => b.start - a.start);
+                  
+                  // Apply highlights
+                  highlights.forEach(({ start, end, severity }) => {
+                    const before = displayText.substring(0, start);
+                    const highlight = displayText.substring(start, end);
+                    const after = displayText.substring(end);
+                    const bgColor = severity === 'high' ? 'bg-red-200' : severity === 'medium' ? 'bg-yellow-200' : 'bg-orange-200';
+                    displayText = `${before}<mark class="${bgColor} font-semibold">${highlight}</mark>${after}`;
+                  });
+                  
+                  return (
+                    <div>
+                      <div className="mb-4 pb-2 border-b">
+                        <h3 className="text-lg font-semibold">Page {currentPage}</h3>
+                        {currentPageRisks.length > 0 && (
+                          <p className="text-sm text-muted-foreground">
+                            {currentPageRisks.length} risk{currentPageRisks.length !== 1 ? 's' : ''} identified on this page
                           </p>
-                        </div>
-                      )}
+                        )}
+                      </div>
+                      <div 
+                        className="text-sm whitespace-pre-wrap font-mono"
+                        dangerouslySetInnerHTML={{ __html: displayText }}
+                      />
                     </div>
-                  )}
-                </div>
+                  );
+                })()}
               </div>
             </div>
           </CardContent>

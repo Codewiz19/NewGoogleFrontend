@@ -1,9 +1,8 @@
 import { useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useParams } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Upload, 
-  BarChart3, 
   MessageCircle, 
   Download, 
   Menu, 
@@ -11,9 +10,18 @@ import {
   Shield,
   Brain
 } from "lucide-react";
+import { getCurrentDocId } from "@/lib/documentCache";
 
 const Sidebar = () => {
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const params = useParams();
+  const cachedDocId = getCurrentDocId();
+  const currentDocId = params.doc_id || cachedDocId;
+
+  const getNavUrl = (baseUrl: string) => {
+    if (baseUrl === "/") return baseUrl;
+    return currentDocId ? `${baseUrl}/${currentDocId}` : baseUrl;
+  };
 
   const navItems = [
     { 
@@ -23,32 +31,26 @@ const Sidebar = () => {
       description: "Scan new files"
     },
     { 
-      title: "Dashboard", 
-      url: "/dashboard", 
-      icon: BarChart3,
-      description: "Analysis hub"
-    },
-    { 
       title: "Document Summary", 
-      url: "/document-summary", 
+      url: getNavUrl("/document-summary"), 
       icon: Shield,
       description: "Document details"
     },
     { 
       title: "Risk Analysis", 
-      url: "/risk-analysis", 
+      url: getNavUrl("/risk-analysis"), 
       icon: Brain,
       description: "Risk assessment"
     },
     { 
       title: "AI Chat", 
-      url: "/chat", 
+      url: getNavUrl("/chat"), 
       icon: MessageCircle,
       description: "Ask questions"
     },
     { 
       title: "Export Report", 
-      url: "/export", 
+      url: getNavUrl("/export"), 
       icon: Download,
       description: "Download results"
     }

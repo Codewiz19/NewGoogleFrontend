@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
+import UploadRequired from "@/components/UploadRequired";
 import { 
   Send, 
   Brain, 
@@ -12,6 +14,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import API from "@/lib/api";
+import { getCachedDocument, getCurrentDocId } from "@/lib/documentCache";
 
 interface Message {
   id: string;
@@ -24,17 +28,71 @@ interface Message {
 }
 
 const ChatBot = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      type: 'bot',
-      content: "Hi! I'm LensBot, your AI legal assistant. Ask me anything about your document. I'll reference the original text and provide simplified explanations.",
-      timestamp: new Date(),
-      confidence: 95
+  const { doc_id: paramDocId } = useParams<{ doc_id?: string }>();
+  const navigate = useNavigate();
+  // Use doc_id from params or get from cache
+  const cachedDocId = getCurrentDocId();
+  const doc_id = paramDocId || cachedDocId;
+
+  // Get cached document info for context
+  const cachedDoc = doc_id ? getCachedDocument(doc_id) : null;
+  const hasDocument = !!(cachedDoc || doc_id);
+
+  // Redirect to URL with doc_id if we have cached doc_id but no param
+  useEffect(() => {
+    if (cachedDocId && !paramDocId && cachedDocId.trim()) {
+      navigate(`/chat/${cachedDocId}`, { replace: true });
     }
-  ]);
+  }, [cachedDocId, paramDocId, navigate]);
+
+  if (!hasDocument) {
+    return <UploadRequired message="Please upload a document first to start chatting with the AI assistant." />;
+  }
+
+  // Initialize messages with proper doc_id and cachedDoc context
+  const getInitialMessage = (): Message => {
+    if (doc_id && cachedDoc?.filename) {
+      return {
+        id: '1',
+        type: 'bot',
+        content: `Hi! I'm LensBot, your AI legal assistant. I'm here to help you understand ${cachedDoc.filename}. Ask me anything about the document, and I'll reference the original text and provide simplified explanations.`,
+        timestamp: new Date(),
+        confidence: 95
+      };
+    } else if (doc_id) {
+      return {
+        id: '1',
+        type: 'bot',
+        content: "Hi! I'm LensBot, your AI legal assistant. Ask me anything about your document, and I'll reference the original text and provide simplified explanations.",
+        timestamp: new Date(),
+        confidence: 95
+      };
+    } else {
+      return {
+        id: '1',
+        type: 'bot',
+        content: "Hi! I'm LensBot, your AI legal assistant. Please provide a document ID to start asking questions.",
+        timestamp: new Date(),
+        confidence: 95
+      };
+    }
+  };
+
+  const [messages, setMessages] = useState<Message[]>([getInitialMessage()]);
+  
+  // Update greeting message when doc_id or cachedDoc filename changes (only if greeting is still present)
+  useEffect(() => {
+    // Only update if we still have just the initial greeting message
+    setMessages(prev => {
+      if (prev.length === 1 && prev[0].id === '1') {
+        return [getInitialMessage()];
+      }
+      return prev;
+    });
+  }, [doc_id]); // Only depend on doc_id to avoid infinite loops
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const suggestedQuestions = [
@@ -53,7 +111,10 @@ const ChatBot = () => {
   }, [messages]);
 
   const handleSendMessage = async () => {
-    if (!inputValue.trim()) return;
+    if (!inputValue.trim() || !doc_id) {
+      console.error("Cannot send message: missing doc_id or input");
+      return;
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -63,45 +124,73 @@ const ChatBot = () => {
     };
 
     setMessages(prev => [...prev, userMessage]);
+    const currentInput = inputValue;
     setInputValue('');
     setIsTyping(true);
 
-    // Simulate AI response
-    setTimeout(() => {
+    try {
+      // Build messages array for chat context (excluding the greeting message)
+      const previousMessages = messages
+        .filter(m => m.id !== '1') // Exclude initial greeting
+        .slice(-5) // Last 5 messages for context
+        .map(msg => ({
+          role: msg.type === 'user' ? 'user' : 'assistant',
+          content: msg.content
+        }));
+      
+      const chatMessages = [
+        ...previousMessages,
+        { role: "user", content: currentInput }
+      ];
+
+      const response = await fetch(API.chat, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          doc_id,
+          messages: chatMessages,
+          session_id: sessionId,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || "Failed to get chat response.");
+      }
+
+      const chatData = await response.json();
+      
+      // Update session ID if provided
+      if (chatData.session_id) {
+        setSessionId(chatData.session_id);
+      }
+
       const botResponse: Message = {
         id: (Date.now() + 1).toString(),
         type: 'bot',
-        content: generateMockResponse(inputValue),
+        content: chatData.response || "I'm sorry, I couldn't generate a response. Please try again.",
         timestamp: new Date(),
-        confidence: Math.floor(Math.random() * 20) + 80,
-        sources: [
-          { 
-            page: 3, 
-            text: "The Landlord may terminate this lease at any time with thirty (30) days written notice..." 
-          }
-        ],
-        relatedLinks: [
-          { title: "Understanding Lease Termination Rights", url: "#" },
-          { title: "Tenant Protection Laws", url: "#" }
-        ]
+        confidence: chatData.fallback ? 70 : 90,
+        sources: chatData.sources || [],
       };
 
       setMessages(prev => [...prev, botResponse]);
+    } catch (error) {
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'bot',
+        content: `Error: ${(error as Error).message}. Please try again.`,
+        timestamp: new Date(),
+        confidence: 0,
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
       setIsTyping(false);
-    }, 2000);
+    }
   };
 
-  const generateMockResponse = (question: string): string => {
-    const responses: { [key: string]: string } = {
-      "early": "Breaking your lease early typically involves paying penalties as outlined in your agreement. Based on your document, you would need to provide 30 days notice and may be responsible for remaining rent payments or early termination fees.",
-      "liability": "The liability waiver in your document attempts to limit the landlord's responsibility for injuries on the property. However, such broad waivers may not be legally enforceable, especially for landlord negligence or building code violations.",
-      "maintenance": "According to your lease, you're responsible for routine maintenance like changing air filters and keeping the property clean. The landlord remains responsible for major repairs, plumbing, heating, and structural issues.",
-      "rent": "Your lease appears to fix the rent amount for the duration of the term. The landlord cannot arbitrarily raise rent during the lease period unless there's a specific escalation clause, which I didn't find in your document."
-    };
-
-    const key = Object.keys(responses).find(k => question.toLowerCase().includes(k));
-    return key ? responses[key] : "I'd be happy to help you understand that aspect of your document. Could you be more specific about which clause or section you're asking about?";
-  };
 
   const handleSuggestedQuestion = (question: string) => {
     setInputValue(question);
@@ -315,9 +404,9 @@ const ChatBot = () => {
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder="Ask me about your legal document..."
+                  placeholder={doc_id ? "Ask me about your legal document..." : "Please upload a document first..."}
                   className="bg-cyber-dark/50 border-neon-blue/30 text-foreground placeholder:text-muted-foreground"
-                  disabled={isTyping}
+                  disabled={isTyping || !doc_id}
                 />
                 <Button
                   variant="outline"
@@ -330,7 +419,7 @@ const ChatBot = () => {
               </div>
               <Button
                 onClick={handleSendMessage}
-                disabled={!inputValue.trim() || isTyping}
+                disabled={!inputValue.trim() || isTyping || !doc_id}
                 className="bg-neon-blue hover:bg-neon-cyan text-cyber-void"
               >
                 <Send className="w-4 h-4" />

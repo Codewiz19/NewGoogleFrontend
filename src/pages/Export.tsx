@@ -1,5 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
+import UploadRequired from "@/components/UploadRequired";
 import { 
   Download, 
   FileText, 
@@ -13,8 +15,27 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { getCachedDocument, getCurrentDocId } from "@/lib/documentCache";
 
 const Export = () => {
+  const { doc_id: paramDocId } = useParams<{ doc_id?: string }>();
+  const navigate = useNavigate();
+  // Use doc_id from params or get from cache
+  const cachedDocId = getCurrentDocId();
+  const doc_id = paramDocId || cachedDocId;
+  const cachedDoc = doc_id ? getCachedDocument(doc_id) : null;
+
+  // Redirect to URL with doc_id if we have cached doc_id but no param
+  useEffect(() => {
+    if (cachedDocId && !paramDocId) {
+      navigate(`/export/${cachedDocId}`, { replace: true });
+    }
+  }, [cachedDocId, paramDocId, navigate]);
+
+  if (!doc_id) {
+    return <UploadRequired message="Please upload a document first to export the analysis report." />;
+  }
+
   const [selectedFormat, setSelectedFormat] = useState('pdf');
   const [includeOptions, setIncludeOptions] = useState({
     summary: true,

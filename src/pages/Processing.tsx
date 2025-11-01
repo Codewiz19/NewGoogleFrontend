@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { 
   Upload, 
@@ -6,77 +7,189 @@ import {
   Brain, 
   Search,
   Loader2,
-  CheckCircle
+  CheckCircle,
+  FileText,
+  AlertTriangle
 } from "lucide-react";
+import API from "@/lib/api";
+import { cacheDocument, updateCachedDocument } from "@/lib/documentCache";
 
 const Processing = () => {
+  const { doc_id } = useParams<{ doc_id: string }>();
+  const navigate = useNavigate();
   const [currentStep, setCurrentStep] = useState(0);
   const [progress, setProgress] = useState(0);
+  const [isComplete, setIsComplete] = useState(false);
+  const [summaryReady, setSummaryReady] = useState(false);
+  const [risksReady, setRisksReady] = useState(false);
 
   const steps = [
     {
       id: 'uploading',
-      title: 'File is being uploaded',
-      description: 'Securely transferring your document',
+      title: 'File Uploaded',
+      description: 'Document securely uploaded and ready for analysis',
       icon: Upload,
-      duration: 3000
+      duration: 1000
     },
     {
-      id: 'chunking',
-      title: 'Splitting into sections',
-      description: 'Breaking document into analyzable segments',
-      icon: Scissors,
-      duration: 4000
+      id: 'summarizing',
+      title: 'Generating Summary',
+      description: 'AI is analyzing your document and creating a comprehensive summary',
+      icon: FileText,
+      duration: 30000 // Will be updated based on actual API response
     },
     {
-      id: 'embedding',
-      title: 'Understanding legal language',
-      description: 'AI analyzing contract terminology and clauses',
-      icon: Brain,
-      duration: 6000
+      id: 'analyzing',
+      title: 'Analyzing Risks',
+      description: 'Identifying potential risks and important clauses',
+      icon: AlertTriangle,
+      duration: 10000
     },
     {
-      id: 'retrieval',
-      title: 'Preparing simplified explanation',
-      description: 'Generating insights and risk analysis',
-      icon: Search,
-      duration: 5000
+      id: 'complete',
+      title: 'Processing Complete',
+      description: 'Your document is ready to view',
+      icon: CheckCircle,
+      duration: 1000
     }
   ];
 
+  // Process document - call summarize and risks endpoints
   useEffect(() => {
-    const totalDuration = steps.reduce((sum, step) => sum + step.duration, 0);
-    let elapsed = 0;
+    if (!doc_id) {
+      navigate("/");
+      return;
+    }
 
-    const timer = setInterval(() => {
-      elapsed += 100;
-      const newProgress = Math.min((elapsed / totalDuration) * 100, 100);
-      setProgress(newProgress);
+    let mounted = true;
+    
+    const processDocument = async () => {
+      try {
+        // Step 1: Upload is complete, move to summarizing
+        setCurrentStep(1);
+        setProgress(25);
 
-      // Update current step
-      let stepProgress = 0;
-      let newCurrentStep = 0;
-      
-      for (let i = 0; i < steps.length; i++) {
-        stepProgress += steps[i].duration;
-        if (elapsed <= stepProgress) {
-          newCurrentStep = i;
-          break;
+        // Step 2: Generate summary
+        try {
+          console.log("Generating summary...");
+          const summarizeResponse = await fetch(API.summarize, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ doc_id }),
+          });
+
+          if (summarizeResponse.ok) {
+            const summaryData = await summarizeResponse.json();
+            console.log("Summary generated successfully");
+            
+            // Cache the summary
+            updateCachedDocument(doc_id, {
+              summary: summaryData.summary,
+              summary_generated_at: Date.now()
+            });
+            
+            if (mounted) {
+              setSummaryReady(true);
+              setProgress(60);
+              setCurrentStep(2);
+            }
+          } else {
+            console.warn("Summary generation failed");
+            if (mounted) {
+              setProgress(60);
+              setCurrentStep(2);
+            }
+          }
+        } catch (summaryError) {
+          console.warn("Summary generation error:", summaryError);
+          if (mounted) {
+            setProgress(60);
+            setCurrentStep(2);
+          }
+        }
+
+        // Step 3: Analyze risks
+        try {
+          console.log("Analyzing risks...");
+          const risksResponse = await fetch(API.risks, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ doc_id }),
+          });
+
+          if (risksResponse.ok) {
+            const risksData = await risksResponse.json();
+            console.log("Risks analyzed successfully");
+            
+            // Cache the risks
+            const risks = risksData.risks || risksData.server_risks || [];
+            updateCachedDocument(doc_id, {
+              risks: risks,
+              risks_generated_at: Date.now()
+            });
+            
+            if (mounted) {
+              setRisksReady(true);
+              setProgress(100);
+              setCurrentStep(3);
+              setIsComplete(true);
+              
+              // Navigate to document summary after a brief delay
+              setTimeout(() => {
+                if (mounted) {
+                  navigate(`/document-summary/${doc_id}`);
+                }
+              }, 2000);
+            }
+          } else {
+            console.warn("Risk analysis failed");
+            if (mounted) {
+              setProgress(100);
+              setCurrentStep(3);
+              setIsComplete(true);
+              setTimeout(() => {
+                if (mounted) {
+                  navigate(`/document-summary/${doc_id}`);
+                }
+              }, 2000);
+            }
+          }
+        } catch (risksError) {
+          console.warn("Risk analysis error:", risksError);
+          if (mounted) {
+            setProgress(100);
+            setCurrentStep(3);
+            setIsComplete(true);
+            setTimeout(() => {
+              if (mounted) {
+                navigate(`/document-summary/${doc_id}`);
+              }
+            }, 2000);
+          }
+        }
+      } catch (error) {
+        console.error("Processing error:", error);
+        if (mounted) {
+          // Still navigate to summary even if there's an error
+          setTimeout(() => {
+            if (mounted) {
+              navigate(`/document-summary/${doc_id}`);
+            }
+          }, 2000);
         }
       }
-      
-      setCurrentStep(newCurrentStep);
+    };
 
-      if (newProgress >= 100) {
-        clearInterval(timer);
-        setTimeout(() => {
-          window.location.href = '/dashboard';
-        }, 1000);
-      }
-    }, 100);
+    processDocument();
 
-    return () => clearInterval(timer);
-  }, []);
+    return () => {
+      mounted = false;
+    };
+  }, [doc_id, navigate]);
 
   return (
     <div className="min-h-screen bg-background neural-bg flex items-center justify-center px-6">
@@ -124,7 +237,7 @@ const Processing = () => {
             </div>
             
             <div className="text-sm text-muted-foreground mt-2">
-              Processing...
+              {isComplete ? "Complete!" : "Processing..."}
             </div>
           </div>
 

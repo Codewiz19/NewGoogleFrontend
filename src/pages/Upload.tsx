@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   Upload as UploadIcon, 
@@ -9,11 +10,15 @@ import {
   Eye
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import API from "@/lib/api";
+import { cacheDocument } from "@/lib/documentCache";
 
 const Upload = () => {
+  const navigate = useNavigate();
   const [dragActive, setDragActive] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<string>("");
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -68,12 +73,45 @@ const Upload = () => {
     if (!targetFile) return;
     
     setUploading(true);
-    // Simulate upload process
-    setTimeout(() => {
+
+    const formData = new FormData();
+    formData.append("file", targetFile);
+
+    try {
+      // Step 1: Upload document
+      setUploadProgress("Uploading document...");
+      const uploadResponse = await fetch(API.upload, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json();
+        throw new Error(errorData.detail || "File upload failed.");
+      }
+
+      const uploadResult = await uploadResponse.json();
+      const docId = uploadResult.doc_id;
+      console.log("File uploaded successfully. Document ID:", docId);
+
+      // Cache initial document info
+      cacheDocument({
+        doc_id: docId,
+        filename: targetFile.name,
+        uploaded_at: Date.now(),
+        corpus_name: uploadResult.corpus_name
+      });
+
+      // Navigate to Processing page - it will handle summarize and risks calls
+      navigate(`/processing/${docId}`);
+    } catch (error) {
+      console.error("An error occurred during document processing:", error);
+      setUploadProgress("");
+      alert(`Error: ${(error as Error).message}`);
+    } finally {
       setUploading(false);
-      // Navigate to processing screen
-      window.location.href = '/processing';
-    }, 2000);
+      setUploadProgress("");
+    }
   };
 
   return (
@@ -227,10 +265,17 @@ const Upload = () => {
                   <motion.div
                     animate={{ rotate: 360 }}
                     transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                    className="flex items-center gap-2"
+                    className="flex flex-col items-center gap-2"
                   >
-                    <Zap className="w-5 h-5" />
-                    SCANNING DOCUMENT...
+                    <div className="flex items-center gap-2">
+                      <Zap className="w-5 h-5" />
+                      PROCESSING...
+                    </div>
+                    {uploadProgress && (
+                      <div className="text-xs text-muted-foreground mt-1">
+                        {uploadProgress}
+                      </div>
+                    )}
                   </motion.div>
                 ) : (
                   <div className="flex items-center gap-2">

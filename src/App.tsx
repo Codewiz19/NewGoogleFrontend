@@ -6,7 +6,6 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import Layout from "./components/layout/Layout";
 import Upload from "./pages/Upload";
 import Processing from "./pages/Processing";
-import Dashboard from "./pages/Dashboard";
 import DocumentSummary from "./pages/DocumentSummary";
 import RiskAnalysis from "./pages/RiskAnalysis";
 import ChatBot from "./pages/ChatBot";
@@ -24,14 +23,16 @@ const App = () => (
         <Routes>
           <Route path="/" element={<Layout />}>
             <Route index element={<Upload />} />
-            <Route path="dashboard" element={<Dashboard />} />
+            <Route path="processing/:doc_id" element={<Processing />} />
+            <Route path="document-summary/:doc_id" element={<DocumentSummary />} />
             <Route path="document-summary" element={<DocumentSummary />} />
+            <Route path="risk-analysis/:doc_id" element={<RiskAnalysis />} />
             <Route path="risk-analysis" element={<RiskAnalysis />} />
+            <Route path="chat/:doc_id" element={<ChatBot />} />
             <Route path="chat" element={<ChatBot />} />
+            <Route path="export/:doc_id" element={<Export />} />
             <Route path="export" element={<Export />} />
           </Route>
-          {/* Routes outside layout */}
-          <Route path="processing" element={<Processing />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
