@@ -23,6 +23,39 @@ const Processing = () => {
   const [summaryReady, setSummaryReady] = useState(false);
   const [risksReady, setRisksReady] = useState(false);
 
+  // Smooth progress animation helper using ref to track current progress
+  const progressRef = useRef(0);
+  
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
+
+  const animateProgress = (targetProgress: number, duration: number = 1000) => {
+    const startProgress = progressRef.current;
+    const startTime = Date.now();
+    
+    const animate = () => {
+      const elapsed = Date.now() - startTime;
+      const progressRatio = Math.min(elapsed / duration, 1);
+      
+      // Easing function for smooth animation
+      const easeOutCubic = 1 - Math.pow(1 - progressRatio, 3);
+      const currentProgress = startProgress + (targetProgress - startProgress) * easeOutCubic;
+      
+      setProgress(currentProgress);
+      progressRef.current = currentProgress;
+      
+      if (progressRatio < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        setProgress(targetProgress);
+        progressRef.current = targetProgress;
+      }
+    };
+    
+    requestAnimationFrame(animate);
+  };
+
   const steps = [
     {
       id: 'uploading',
@@ -67,11 +100,22 @@ const Processing = () => {
       try {
         // Step 1: Upload is complete, move to summarizing
         setCurrentStep(1);
-        setProgress(25);
+        animateProgress(25, 800);
 
         // Step 2: Generate summary
         try {
           console.log("Generating summary...");
+          
+          // Show progress while waiting for summary
+          const summaryProgressInterval = setInterval(() => {
+            setProgress(prev => {
+              if (prev < 55) {
+                return Math.min(prev + 0.5, 55); // Gradually increase to 55% during summary
+              }
+              return prev;
+            });
+          }, 100);
+
           const summarizeResponse = await fetch(API.summarize, {
             method: "POST",
             headers: {
@@ -79,6 +123,8 @@ const Processing = () => {
             },
             body: JSON.stringify({ doc_id }),
           });
+
+          clearInterval(summaryProgressInterval);
 
           if (summarizeResponse.ok) {
             const summaryData = await summarizeResponse.json();
@@ -92,20 +138,20 @@ const Processing = () => {
             
             if (mounted) {
               setSummaryReady(true);
-              setProgress(60);
+              animateProgress(60, 800);
               setCurrentStep(2);
             }
           } else {
             console.warn("Summary generation failed");
             if (mounted) {
-              setProgress(60);
+              animateProgress(60, 800);
               setCurrentStep(2);
             }
           }
         } catch (summaryError) {
           console.warn("Summary generation error:", summaryError);
           if (mounted) {
-            setProgress(60);
+            animateProgress(60, 800);
             setCurrentStep(2);
           }
         }
@@ -113,6 +159,17 @@ const Processing = () => {
         // Step 3: Analyze risks
         try {
           console.log("Analyzing risks...");
+          
+          // Show progress while waiting for risks
+          const risksProgressInterval = setInterval(() => {
+            setProgress(prev => {
+              if (prev < 95) {
+                return Math.min(prev + 0.5, 95); // Gradually increase to 95% during risk analysis
+              }
+              return prev;
+            });
+          }, 150);
+
           const risksResponse = await fetch(API.risks, {
             method: "POST",
             headers: {
@@ -120,6 +177,8 @@ const Processing = () => {
             },
             body: JSON.stringify({ doc_id }),
           });
+
+          clearInterval(risksProgressInterval);
 
           if (risksResponse.ok) {
             const risksData = await risksResponse.json();
@@ -134,7 +193,7 @@ const Processing = () => {
             
             if (mounted) {
               setRisksReady(true);
-              setProgress(100);
+              animateProgress(100, 1000);
               setCurrentStep(3);
               setIsComplete(true);
               
@@ -148,7 +207,7 @@ const Processing = () => {
           } else {
             console.warn("Risk analysis failed");
             if (mounted) {
-              setProgress(100);
+              animateProgress(100, 1000);
               setCurrentStep(3);
               setIsComplete(true);
               setTimeout(() => {
@@ -161,7 +220,7 @@ const Processing = () => {
         } catch (risksError) {
           console.warn("Risk analysis error:", risksError);
           if (mounted) {
-            setProgress(100);
+            animateProgress(100, 1000);
             setCurrentStep(3);
             setIsComplete(true);
             setTimeout(() => {
@@ -205,15 +264,33 @@ const Processing = () => {
           animate={{ rotate: 360 }}
           transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
         >
-          {/* Outer Ring */}
+          {/* Outer Ring with Smooth Animation */}
           <div className="absolute inset-0 rounded-full border-4 border-cyber-dark">
-            <motion.div
-              className="absolute inset-0 rounded-full border-4 border-transparent"
-              style={{
-                background: `conic-gradient(from 0deg, hsl(var(--neon-blue)) ${progress}%, transparent ${progress}%)`,
-                borderRadius: '50%'
-              }}
-            />
+            <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 100 100">
+              <circle
+                cx="50"
+                cy="50"
+                r="46"
+                fill="none"
+                stroke="hsl(var(--cyber-dark))"
+                strokeWidth="4"
+              />
+              <motion.circle
+                cx="50"
+                cy="50"
+                r="46"
+                fill="none"
+                stroke="hsl(var(--neon-blue))"
+                strokeWidth="4"
+                strokeLinecap="round"
+                initial={{ pathLength: 0 }}
+                animate={{ pathLength: progress / 100 }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+                style={{
+                  filter: `drop-shadow(0 0 3px hsl(var(--neon-blue)))`
+                }}
+              />
+            </svg>
           </div>
 
           {/* Inner Content */}

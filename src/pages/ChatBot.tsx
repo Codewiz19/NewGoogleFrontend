@@ -9,7 +9,10 @@ import {
   Trash2,
   Mic,
   ExternalLink,
-  AlertCircle
+  AlertCircle,
+  Scale,
+  Copy,
+  Check
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -93,14 +96,11 @@ const ChatBot = () => {
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [lawyerQuestions, setLawyerQuestions] = useState<string[]>([]);
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+  const [questionsCopied, setQuestionsCopied] = useState(false);
+  const [showQuestions, setShowQuestions] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  const suggestedQuestions = [
-    "What if I break the lease early?",
-    "Explain the liability waiver",
-    "What are my maintenance responsibilities?",
-    "Can the landlord raise rent during the lease?"
-  ];
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -192,12 +192,50 @@ const ChatBot = () => {
   };
 
 
-  const handleSuggestedQuestion = (question: string) => {
-    setInputValue(question);
-  };
-
   const clearChat = () => {
     setMessages([messages[0]]); // Keep only the greeting
+  };
+
+  const handleGenerateLawyerQuestions = async () => {
+    if (!doc_id) return;
+    
+    setIsGeneratingQuestions(true);
+    setShowQuestions(true);
+    
+    try {
+      const response = await fetch(API.lawyerQuestions, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ doc_id }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to generate lawyer questions");
+      }
+
+      const data = await response.json();
+      setLawyerQuestions(data.questions || []);
+    } catch (error) {
+      console.error("Error generating lawyer questions:", error);
+      setLawyerQuestions([]);
+    } finally {
+      setIsGeneratingQuestions(false);
+    }
+  };
+
+  const handleCopyQuestions = () => {
+    if (lawyerQuestions.length === 0) return;
+    
+    const questionsText = lawyerQuestions
+      .map((q, i) => `${i + 1}. ${q}`)
+      .join('\n\n');
+    
+    navigator.clipboard.writeText(questionsText).then(() => {
+      setQuestionsCopied(true);
+      setTimeout(() => setQuestionsCopied(false), 2000);
+    });
   };
 
   const getConfidenceColor = (confidence?: number) => {
@@ -376,28 +414,105 @@ const ChatBot = () => {
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Suggested Questions */}
-          {messages.length <= 1 && (
-            <div className="p-4 border-t border-neon-blue/20">
-              <div className="text-xs text-muted-foreground mb-3 font-rajdhani">
-                SUGGESTED QUESTIONS:
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {suggestedQuestions.map((question, index) => (
-                  <button
-                    key={index}
-                    onClick={() => handleSuggestedQuestion(question)}
-                    className="text-xs px-3 py-2 rounded-lg bg-cyber-navy/30 border border-neon-blue/30 text-neon-blue hover:bg-neon-blue/10 transition-colors"
-                  >
-                    {question}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Lawyer Questions Section */}
+          <AnimatePresence>
+            {showQuestions && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="border-t border-neon-blue/20 bg-cyber-navy/20"
+              >
+                <div className="p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2">
+                      <Scale className="w-5 h-5 text-neon-cyan" />
+                      <h3 className="text-sm font-rajdhani font-semibold text-neon-cyan">
+                        QUESTIONS FOR LAWYER REVIEW
+                      </h3>
+                    </div>
+                    <div className="flex gap-2">
+                      {lawyerQuestions.length > 0 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleCopyQuestions}
+                          className="border-neon-green/30 text-neon-green hover:bg-neon-green/10 text-xs"
+                        >
+                          {questionsCopied ? (
+                            <>
+                              <Check className="w-3 h-3 mr-1" />
+                              Copied
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3 mr-1" />
+                              Copy
+                            </>
+                          )}
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowQuestions(false)}
+                        className="border-muted-foreground/30 text-xs"
+                      >
+                        Hide
+                      </Button>
+                    </div>
+                  </div>
+
+                  {isGeneratingQuestions ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <div className="w-4 h-4 border-2 border-neon-cyan border-t-transparent rounded-full animate-spin" />
+                      Generating questions for lawyer review...
+                    </div>
+                  ) : lawyerQuestions.length > 0 ? (
+                    <div className="space-y-3">
+                      {lawyerQuestions.map((question, index) => (
+                        <motion.div
+                          key={index}
+                          initial={{ opacity: 0, x: -10 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: index * 0.1 }}
+                          className="p-3 rounded-lg bg-cyber-dark/50 border-l-4 border-neon-cyan"
+                        >
+                          <div className="text-sm font-medium text-foreground">
+                            {index + 1}. {question}
+                          </div>
+                        </motion.div>
+                      ))}
+                      <div className="text-xs text-muted-foreground mt-3 italic">
+                        These questions are based on document analysis and identified risks. 
+                        Consult with a qualified legal professional for specific legal advice.
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-sm text-muted-foreground">
+                      No specific questions were generated. The document appears to be straightforward 
+                      with no major legal concerns requiring immediate lawyer consultation.
+                    </div>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Input Area */}
           <div className="p-4 border-t border-neon-blue/20">
+            {/* Generate Lawyer Questions Button */}
+            <div className="mb-3 flex justify-end">
+              <Button
+                onClick={handleGenerateLawyerQuestions}
+                disabled={isGeneratingQuestions || !doc_id}
+                className="bg-neon-cyan/20 hover:bg-neon-cyan/30 text-neon-cyan border border-neon-cyan/30 text-xs"
+              >
+                <Scale className="w-4 h-4 mr-2" />
+                {isGeneratingQuestions ? "Generating..." : "Generate Questions for Lawyer"}
+              </Button>
+            </div>
+
             <div className="flex gap-3">
               <div className="flex-1 flex gap-2">
                 <Input

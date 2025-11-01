@@ -116,22 +116,50 @@ const RiskAnalysis = () => {
   const maxPage = allPageNumbers.length > 0 ? Math.max(...allPageNumbers) : 1;
 
   // Convert risks to redFlags format for display
-  const redFlags = risks.length > 0 ? risks.map((risk, index) => ({
-    id: risk.id || `risk-${index}`,
-    severity: risk.severity_level?.toLowerCase() || 'medium',
-    title: risk.short_risk || risk.label || `Risk ${index + 1}`,
-    originalText: risk.snippet || risk.original_text || '',
-    explanation: risk.explanation || 'Risk identified in document',
-    whyRisky: Array.isArray(risk.recommendations) ? risk.recommendations : 
-              (risk.recommendations ? [risk.recommendations] : ['Review this clause carefully']),
-    suggestedAction: Array.isArray(risk.recommendations) ? risk.recommendations[0] : 
-                     (risk.recommendations || 'Review this clause carefully'),
-    pageNumber: risk.page_number || 1,
-    pageText: risk.page_text || '',
-    highlightStart: risk.highlight_start || 0,
-    highlightEnd: risk.highlight_end || 0,
-    severityScore: risk.severity_score || 0
-  })) : [
+  const redFlags = risks.length > 0 ? risks.map((risk, index) => {
+    // Clean up label - use short_risk first, then clean label (remove duplicates)
+    let cleanLabel = risk.short_risk || risk.label || `Risk ${index + 1}`;
+    if (cleanLabel.includes(' ; ')) {
+      // Remove duplicate segments
+      const parts = cleanLabel.split(' ; ').filter((part, idx, arr) => arr.indexOf(part) === idx);
+      cleanLabel = parts[0]; // Use first unique part as title
+    }
+    
+    // Get recommendations as array
+    let recommendations: string[] = [];
+    if (Array.isArray(risk.recommendations)) {
+      recommendations = risk.recommendations.filter(rec => rec && rec.trim());
+    } else if (risk.recommendations && typeof risk.recommendations === 'string') {
+      recommendations = [risk.recommendations];
+    }
+    
+    // Generate meaningful explanation if missing
+    const explanation = risk.explanation && risk.explanation.trim() && 
+                       risk.explanation !== 'Risk identified in document'
+                       ? risk.explanation
+                       : (recommendations.length > 0 
+                          ? `This clause requires attention. ${recommendations[0]}` 
+                          : `Risk identified: ${cleanLabel}`);
+    
+    return {
+      id: risk.id || `risk-${index}`,
+      severity: risk.severity_level?.toLowerCase() || 'medium',
+      title: cleanLabel,
+      originalText: risk.snippet || risk.original_text || '',
+      explanation: explanation,
+      whyRisky: recommendations.length > 0 
+        ? recommendations 
+        : ['Review this clause with a legal professional to understand full implications'],
+      suggestedAction: recommendations.length > 0 
+        ? recommendations[0] 
+        : 'Consult with a legal professional about this clause',
+      pageNumber: risk.page_number || 1,
+      pageText: risk.page_text || '',
+      highlightStart: risk.highlight_start || 0,
+      highlightEnd: risk.highlight_end || 0,
+      severityScore: risk.severity_score || 0
+    };
+  }) : [
     {
       id: "no-risks",
       severity: "low",
@@ -197,7 +225,7 @@ const RiskAnalysis = () => {
               <CardTitle>Risk Score</CardTitle>
             </CardHeader>
             <CardContent className="flex justify-center">
-              <RiskGauge value={riskScore} />
+              <RiskGauge score={riskScore} />
             </CardContent>
           </Card>
 

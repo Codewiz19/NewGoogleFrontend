@@ -12,6 +12,7 @@ export const API = {
   chat: `${API_BASE_URL}/chat`,
   getDocument: (docId: string) => `${API_BASE_URL}/document/${docId}`,
   debugRag: (docId: string) => `${API_BASE_URL}/debug_rag/${docId}`,
+  lawyerQuestions: `${API_BASE_URL}/lawyer-questions`,
 };
 
 export default API;

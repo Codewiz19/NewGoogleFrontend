@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Loader, FileText as FileTextIcon } from "lucide-react";
+import { Loader, FileText as FileTextIcon, Shield, AlertTriangle, CheckCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import UploadRequired from "@/components/UploadRequired";
 import API from "@/lib/api";
@@ -127,18 +127,180 @@ const DocumentSummary = () => {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                <div>
-                  <h3 className="text-lg font-rajdhani font-semibold mb-3 text-neon-cyan">Summary</h3>
-                  <p className="font-sans whitespace-pre-wrap text-foreground leading-relaxed">
-                    {summary || "No summary available yet."}
-                  </p>
-                </div>
+              <div className="space-y-6">
+                {summary ? (
+                  <FormattedSummary text={summary} />
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Loader className="w-8 h-8 animate-spin mx-auto mb-3" />
+                    <p>Summary is still being generated. Please wait a moment and refresh.</p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
         </motion.div>
       </motion.div>
+    </div>
+  );
+};
+
+// Component to format and display summary with proper headings and styling
+const FormattedSummary = ({ text }: { text: string }) => {
+  // Convert markdown-style bold (**text**) to actual bold formatting
+  const convertBoldText = (content: string) => {
+    // Replace **text** with bold span
+    return content.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold text-foreground">$1</strong>');
+  };
+  
+  // Parse the summary text to identify sections and format them
+  const parseSummary = (summary: string) => {
+    const sections: Array<{ type: 'heading' | 'paragraph' | 'list' | 'subheading'; content: string }> = [];
+    const lines = summary.split('\n');
+    
+    let currentSection: { type: string; content: string } | null = null;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      
+      if (!line) {
+        if (currentSection) {
+          sections.push(currentSection);
+          currentSection = null;
+        }
+        continue;
+      }
+      
+      // Detect headings (lines that are short and end without period, or numbered headings)
+      const isHeading = line.length < 100 && (
+        line.match(/^\d+\)?\s+[A-Z]/) || // Numbered headings like "1) EXECUTIVE SUMMARY"
+        line.match(/^[A-Z][A-Z\s:]+$/) || // ALL CAPS headings
+        line.match(/^[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*:$/) || // Title Case headings with colon
+        (line.length < 60 && !line.includes('.') && line.split(' ').length <= 8)
+      );
+      
+      // Detect list items
+      const isListItem = line.match(/^[-•*]\s+/) || line.match(/^\d+\.\s+/);
+      
+      // Detect subheadings (shorter lines that are emphasized)
+      const isSubheading = line.length < 80 && (
+        line.match(/^[A-Z][^.]{0,50}:$/) || // Ends with colon
+        (line.split(' ').length <= 6 && !line.includes('.'))
+      );
+      
+      if (isHeading && !isListItem) {
+        if (currentSection) sections.push(currentSection);
+        currentSection = { type: 'heading', content: line };
+      } else if (isSubheading && !isListItem) {
+        if (currentSection) sections.push(currentSection);
+        currentSection = { type: 'subheading', content: line };
+      } else if (isListItem) {
+        if (currentSection && currentSection.type === 'list') {
+          currentSection.content += '\n' + line;
+        } else {
+          if (currentSection) sections.push(currentSection);
+          currentSection = { type: 'list', content: line };
+        }
+      } else {
+        if (currentSection && currentSection.type === 'paragraph') {
+          currentSection.content += ' ' + line;
+        } else {
+          if (currentSection) sections.push(currentSection);
+          currentSection = { type: 'paragraph', content: line };
+        }
+      }
+    }
+    
+    if (currentSection) sections.push(currentSection);
+    return sections;
+  };
+  
+  const sections = parseSummary(text);
+  
+  return (
+    <div className="space-y-6">
+      {sections.map((section, index) => (
+        <motion.div
+          key={index}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: index * 0.1 }}
+          className="space-y-3"
+        >
+          {section.type === 'heading' && (
+            <div className="flex items-center gap-3 mb-4 pb-3 border-b border-neon-cyan/20">
+              <div className="w-1 h-8 bg-gradient-to-b from-neon-cyan to-neon-blue rounded-full" />
+              <h2 
+                className="text-2xl font-orbitron font-bold text-neon-cyan cyber-glow"
+                dangerouslySetInnerHTML={{ 
+                  __html: convertBoldText(section.content.replace(/^\d+\)?\s*/, '').replace(/:$/, '')) 
+                }}
+              />
+            </div>
+          )}
+          
+          {section.type === 'subheading' && (
+            <div className="flex items-center gap-2 mb-2">
+              <Shield className="w-5 h-5 text-neon-blue flex-shrink-0" />
+              <h3 
+                className="text-xl font-rajdhani font-semibold text-neon-blue"
+                dangerouslySetInnerHTML={{ 
+                  __html: convertBoldText(section.content.replace(/:$/, '')) 
+                }}
+              />
+            </div>
+          )}
+          
+          {section.type === 'list' && (
+            <div className="ml-4 space-y-2">
+              {section.content.split('\n').map((item, idx) => {
+                const cleanItem = item.replace(/^[-•*]\s+/, '').replace(/^\d+\.\s+/, '').trim();
+                if (!cleanItem) return null;
+                
+                // Check if item has bold text followed by colon (like "**Rent Payment: ** text")
+                const hasBoldLabel = cleanItem.match(/^\*\*(.*?)\*\*\s*:\s*(.*)/);
+                
+                return (
+                  <motion.div
+                    key={idx}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.05 + idx * 0.05 }}
+                    className="flex items-start gap-3 group"
+                  >
+                    <CheckCircle className="w-5 h-5 text-neon-green mt-0.5 flex-shrink-0 group-hover:scale-110 transition-transform" />
+                    <p 
+                      className="text-foreground leading-relaxed flex-1"
+                      dangerouslySetInnerHTML={{ 
+                        __html: hasBoldLabel 
+                          ? `<span class="font-bold text-neon-cyan">${hasBoldLabel[1]}:</span> ${convertBoldText(hasBoldLabel[2])}`
+                          : convertBoldText(cleanItem)
+                      }}
+                    />
+                  </motion.div>
+                );
+              })}
+            </div>
+          )}
+          
+          {section.type === 'paragraph' && (
+            <p 
+              className="text-foreground leading-relaxed text-base pl-2 border-l-2 border-neon-blue/30"
+              dangerouslySetInnerHTML={{ __html: convertBoldText(section.content) }}
+            />
+          )}
+        </motion.div>
+      ))}
+      
+      {/* Fallback: if parsing didn't work well, show as formatted text */}
+      {sections.length === 0 && (
+        <div className="prose prose-invert max-w-none">
+          <p 
+            className="text-foreground leading-relaxed whitespace-pre-wrap"
+            dangerouslySetInnerHTML={{ __html: convertBoldText(text) }}
+          />
+        </div>
+      )}
     </div>
   );
 };
