@@ -3,7 +3,7 @@
  * Centralized API endpoint management
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL = "https://gcp25github-642359174267.asia-south2.run.app";
 
 export const API = {
   upload: `${API_BASE_URL}/upload`,
