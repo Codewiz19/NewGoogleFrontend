@@ -65,18 +65,11 @@ const Processing = () => {
       duration: 1000
     },
     {
-      id: 'summarizing',
-      title: 'Generating Summary',
-      description: 'AI is analyzing your document and creating a comprehensive summary',
-      icon: FileText,
+      id: 'processing',
+      title: 'Analyzing Document',
+      description: 'AI is analyzing your document (summary and risks in parallel)',
+      icon: Brain,
       duration: 30000 // Will be updated based on actual API response
-    },
-    {
-      id: 'analyzing',
-      title: 'Analyzing Risks',
-      description: 'Identifying potential risks and important clauses',
-      icon: AlertTriangle,
-      duration: 10000
     },
     {
       id: 'complete',
@@ -98,130 +91,105 @@ const Processing = () => {
     
     const processDocument = async () => {
       try {
-        // Step 1: Upload is complete, move to summarizing
+        // Step 1: Upload is complete, move to parallel processing
         setCurrentStep(1);
         animateProgress(25, 800);
 
-        // Step 2: Generate summary
+        // Step 2: Call summarize and risks endpoints in PARALLEL
         try {
-          console.log("Generating summary...");
+          console.log("Starting parallel processing: summary and risks...");
           
-          // Show progress while waiting for summary
-          const summaryProgressInterval = setInterval(() => {
+          // Show progress while waiting for both endpoints
+          const progressInterval = setInterval(() => {
             setProgress(prev => {
-              if (prev < 55) {
-                return Math.min(prev + 0.5, 55); // Gradually increase to 55% during summary
+              if (prev < 95) {
+                return Math.min(prev + 0.5, 95); // Gradually increase during parallel processing
               }
               return prev;
             });
           }, 100);
 
-          const summarizeResponse = await fetch(API.summarize, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ doc_id }),
-          });
+          // Call both endpoints SIMULTANEOUSLY using Promise.allSettled
+          const [summarizeResult, risksResult] = await Promise.allSettled([
+            fetch(API.summarize, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ doc_id }),
+            }),
+            fetch(API.risks, {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({ doc_id }),
+            }),
+          ]);
 
-          clearInterval(summaryProgressInterval);
+          clearInterval(progressInterval);
 
-          if (summarizeResponse.ok) {
-            const summaryData = await summarizeResponse.json();
-            console.log("Summary generated successfully");
-            
-            // Cache the summary
-            updateCachedDocument(doc_id, {
-              summary: summaryData.summary,
-              summary_generated_at: Date.now()
-            });
-            
-            if (mounted) {
-              setSummaryReady(true);
-              animateProgress(60, 800);
-              setCurrentStep(2);
-            }
-          } else {
-            console.warn("Summary generation failed");
-            if (mounted) {
-              animateProgress(60, 800);
-              setCurrentStep(2);
-            }
-          }
-        } catch (summaryError) {
-          console.warn("Summary generation error:", summaryError);
-          if (mounted) {
-            animateProgress(60, 800);
-            setCurrentStep(2);
-          }
-        }
-
-        // Step 3: Analyze risks
-        try {
-          console.log("Analyzing risks...");
-          
-          // Show progress while waiting for risks
-          const risksProgressInterval = setInterval(() => {
-            setProgress(prev => {
-              if (prev < 95) {
-                return Math.min(prev + 0.5, 95); // Gradually increase to 95% during risk analysis
-              }
-              return prev;
-            });
-          }, 150);
-
-          const risksResponse = await fetch(API.risks, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({ doc_id }),
-          });
-
-          clearInterval(risksProgressInterval);
-
-          if (risksResponse.ok) {
-            const risksData = await risksResponse.json();
-            console.log("Risks analyzed successfully");
-            
-            // Cache the risks
-            const risks = risksData.risks || risksData.server_risks || [];
-            updateCachedDocument(doc_id, {
-              risks: risks,
-              risks_generated_at: Date.now()
-            });
-            
-            if (mounted) {
-              setRisksReady(true);
-              animateProgress(100, 1000);
-              setCurrentStep(3);
-              setIsComplete(true);
+          // Handle summarize response
+          if (summarizeResult.status === 'fulfilled' && summarizeResult.value.ok) {
+            try {
+              const summaryData = await summarizeResult.value.json();
+              console.log("Summary generated successfully");
               
-              // Navigate to document summary after a brief delay
-              setTimeout(() => {
-                if (mounted) {
-                  navigate(`/document-summary/${doc_id}`);
-                }
-              }, 2000);
+              updateCachedDocument(doc_id, {
+                summary: summaryData.summary,
+                summary_generated_at: Date.now()
+              });
+              
+              if (mounted) {
+                setSummaryReady(true);
+              }
+            } catch (e) {
+              console.warn("Error parsing summary response:", e);
             }
           } else {
-            console.warn("Risk analysis failed");
-            if (mounted) {
-              animateProgress(100, 1000);
-              setCurrentStep(3);
-              setIsComplete(true);
-              setTimeout(() => {
-                if (mounted) {
-                  navigate(`/document-summary/${doc_id}`);
-                }
-              }, 2000);
-            }
+            console.warn("Summary generation failed or pending");
           }
-        } catch (risksError) {
-          console.warn("Risk analysis error:", risksError);
+
+          // Handle risks response
+          if (risksResult.status === 'fulfilled' && risksResult.value.ok) {
+            try {
+              const risksData = await risksResult.value.json();
+              console.log("Risks analyzed successfully");
+              
+              const risks = risksData.risks || risksData.server_risks || [];
+              updateCachedDocument(doc_id, {
+                risks: risks,
+                risks_generated_at: Date.now()
+              });
+              
+              if (mounted) {
+                setRisksReady(true);
+              }
+            } catch (e) {
+              console.warn("Error parsing risks response:", e);
+            }
+          } else {
+            console.warn("Risk analysis failed or pending");
+          }
+
+          // Update progress and navigate once both are complete (or attempted)
           if (mounted) {
             animateProgress(100, 1000);
-            setCurrentStep(3);
+            setCurrentStep(2);
+            setIsComplete(true);
+            
+            // Navigate to document summary after a brief delay
+            setTimeout(() => {
+              if (mounted) {
+                navigate(`/document-summary/${doc_id}`);
+              }
+            }, 2000);
+          }
+        } catch (error) {
+          console.warn("Parallel processing error:", error);
+          if (mounted) {
+            animateProgress(100, 1000);
+            setCurrentStep(2);
             setIsComplete(true);
             setTimeout(() => {
               if (mounted) {
@@ -424,7 +392,7 @@ const Processing = () => {
           className="mt-12 text-center"
         >
           <p className="text-sm text-muted-foreground">
-            Average processing time: 15-30 seconds • Your document remains private and ephemeral
+            Average processing time: 30-45 seconds (parallel processing) • Your document remains private and ephemeral
           </p>
         </motion.div>
       </motion.div>

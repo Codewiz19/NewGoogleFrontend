@@ -12,7 +12,8 @@ import {
   AlertCircle,
   Scale,
   Copy,
-  Check
+  Check,
+  CheckCircle
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -200,7 +201,6 @@ const ChatBot = () => {
     if (!doc_id) return;
     
     setIsGeneratingQuestions(true);
-    setShowQuestions(true);
     
     try {
       const response = await fetch(API.lawyerQuestions, {
@@ -216,10 +216,24 @@ const ChatBot = () => {
       }
 
       const data = await response.json();
-      setLawyerQuestions(data.questions || []);
+      const questions = data.questions || [];
+      
+      // Only set questions if they exist (0-4 questions as needed)
+      setLawyerQuestions(questions);
+      
+      // Only show questions section if there are actually questions (1-4 questions)
+      // If 0 questions, it means they're not necessary - hide the section
+      if (questions.length > 0) {
+        setShowQuestions(true);
+      } else {
+        // No questions needed - hide the section
+        setShowQuestions(false);
+        setLawyerQuestions([]);
+      }
     } catch (error) {
       console.error("Error generating lawyer questions:", error);
       setLawyerQuestions([]);
+      setShowQuestions(false);
     } finally {
       setIsGeneratingQuestions(false);
     }
@@ -484,16 +498,11 @@ const ChatBot = () => {
                         </motion.div>
                       ))}
                       <div className="text-xs text-muted-foreground mt-3 italic">
-                        These questions are based on document analysis and identified risks. 
+                        These questions are based on document analysis and identified significant risks. 
                         Consult with a qualified legal professional for specific legal advice.
                       </div>
                     </div>
-                  ) : (
-                    <div className="text-sm text-muted-foreground">
-                      No specific questions were generated. The document appears to be straightforward 
-                      with no major legal concerns requiring immediate lawyer consultation.
-                    </div>
-                  )}
+                  ) : null}
                 </div>
               </motion.div>
             )}

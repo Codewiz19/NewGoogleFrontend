@@ -11,6 +11,7 @@ export const API = {
   risks: `${API_BASE_URL}/risks`,
   chat: `${API_BASE_URL}/chat`,
   getDocument: (docId: string) => `${API_BASE_URL}/document/${docId}`,
+  getDocumentPdf: (docId: string) => `${API_BASE_URL}/document/${docId}/pdf`,
   debugRag: (docId: string) => `${API_BASE_URL}/debug_rag/${docId}`,
   lawyerQuestions: `${API_BASE_URL}/lawyer-questions`,
 };
