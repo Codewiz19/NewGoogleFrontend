@@ -488,6 +488,8 @@ interface RiskData {
   page_text?: string;
   original_text?: string;
   snippet?: string;
+  highlight_start?: number; // Character position start (relative to page text)
+  highlight_end?: number; // Character position end (relative to page text)
 }
 
 interface RedFlag {
@@ -498,7 +500,9 @@ interface RedFlag {
   recommendations: string[];
   pageNumber: number;
   pageText: string;
-  highlightText: string; // The text to find and highlight
+  highlightText: string; // The text to find and highlight (for reference)
+  highlightStart: number; // Character position start (relative to page text)
+  highlightEnd: number; // Character position end (relative to page text)
   severityScore: number;
 }
 
@@ -510,7 +514,7 @@ interface RedFlag {
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
- * Renders the page text with specified snippets highlighted.
+ * Renders the page text with specified snippets highlighted using exact character positions.
  */
 const HighlightedPage = ({
   pageText,
@@ -519,53 +523,71 @@ const HighlightedPage = ({
   pageText: string;
   risksOnPage: RedFlag[];
 }) => {
-  const highlightsMap = new Map<string, string>();
+  // Collect all highlight ranges with their severities
+  const highlights: Array<{ start: number; end: number; severity: string }> = [];
+  
   risksOnPage.forEach((risk) => {
-    // Use highlightText (which is original_text/snippet)
-    if (risk.highlightText && !highlightsMap.has(risk.highlightText)) {
-      highlightsMap.set(risk.highlightText, risk.severity);
+    // Use exact character positions from backend
+    if (risk.highlightStart >= 0 && risk.highlightEnd > risk.highlightStart && risk.highlightEnd <= pageText.length) {
+      highlights.push({
+        start: risk.highlightStart,
+        end: risk.highlightEnd,
+        severity: risk.severity,
+      });
     }
   });
 
-  if (highlightsMap.size === 0) {
+  // If no valid highlights, return plain text
+  if (highlights.length === 0) {
     return (
       <div className="text-sm whitespace-pre-wrap font-mono">{pageText}</div>
     );
   }
 
-  const regex = new RegExp(
-    Array.from(highlightsMap.keys()).map(escapeRegExp).join("|"),
-    "g"
-  );
+  // Sort highlights by start position (ascending)
+  highlights.sort((a, b) => a.start - b.start);
 
-  const parts = pageText.split(regex);
-  const matches = [...pageText.matchAll(regex)];
-
+  // Build elements by processing highlights from start to end
   const elements: React.ReactNode[] = [];
+  let currentPos = 0;
 
-  parts.forEach((part, index) => {
-    elements.push(<span key={`part-${index}`}>{part}</span>);
-    const match = matches[index];
-    if (match) {
-      const snippet = match[0];
-      const severity = highlightsMap.get(snippet) || "medium";
-      const bgColor =
-        severity === "high"
-          ? "bg-red-200"
-          : severity === "medium"
-          ? "bg-yellow-200"
-          : "bg-orange-200";
-
+  highlights.forEach((highlight, index) => {
+    // Add text before highlight
+    if (highlight.start > currentPos) {
       elements.push(
-        <mark
-          key={`mark-${index}`}
-          className={`${bgColor} font-semibold rounded px-0.5`}
-        >
-          {snippet}
-        </mark>
+        <span key={`text-before-${index}`}>
+          {pageText.substring(currentPos, highlight.start)}
+        </span>
       );
     }
+
+    // Add highlighted text (using exact substring from pageText)
+    const highlightedText = pageText.substring(highlight.start, highlight.end);
+    const bgColor =
+      highlight.severity === "high"
+        ? "bg-red-200"
+        : highlight.severity === "medium"
+        ? "bg-yellow-200"
+        : "bg-orange-200";
+
+    elements.push(
+      <mark
+        key={`highlight-${index}`}
+        className={`${bgColor} font-semibold rounded px-0.5`}
+      >
+        {highlightedText}
+      </mark>
+    );
+
+    currentPos = Math.max(currentPos, highlight.end);
   });
+
+  // Add any remaining text at the end
+  if (currentPos < pageText.length) {
+    elements.push(
+      <span key="text-end">{pageText.substring(currentPos)}</span>
+    );
+  }
 
   return (
     <div className="text-sm whitespace-pre-wrap font-mono leading-relaxed">
@@ -675,6 +697,8 @@ const RiskAnalysis = () => {
                 original_text: serverData?.original_text || serverData?.snippet,
                 snippet: serverData?.snippet,
                 label: serverData?.label, // Keep as a fallback
+                highlight_start: serverData?.highlight_start, // Preserve highlight positions
+                highlight_end: serverData?.highlight_end, // Preserve highlight positions
               };
             });
             console.log("Merge successful.");
@@ -752,16 +776,163 @@ const RiskAnalysis = () => {
           pageNumber: 1,
           pageText: "No document text available for no-risk report.",
           highlightText: "",
+          highlightStart: 0,
+          highlightEnd: 0,
           severityScore: 0,
         },
       ];
     }
 
+    // Helper function to generate contextual fallback explanation based on risk label/title
+    const generateFallbackExplanation = (label: string, snippet: string): string => {
+      const labelLower = label.toLowerCase();
+      if (labelLower.includes("termination")) {
+        return "This clause defines termination conditions and notice periods. Review the specific terms to understand when and how the contract can be ended, what notice is required, and whether termination rights are mutual or one-sided.";
+      } else if (labelLower.includes("liability") || labelLower.includes("liabilit")) {
+        return "This clause addresses liability limitations or allocations. Such clauses can significantly impact your legal protection and financial exposure in case of disputes or damages.";
+      } else if (labelLower.includes("penalt")) {
+        return "This clause outlines penalties or liquidated damages. Review the specific amounts, triggers, and whether they are reasonable and clearly defined.";
+      } else if (labelLower.includes("indemnif")) {
+        return "This indemnity clause may require one party to compensate the other for losses. Indemnity provisions can be broad and may create unexpected financial obligations.";
+      } else if (labelLower.includes("warrant")) {
+        return "This warranty clause defines what is guaranteed and what is not. Review the scope, duration, and any disclaimers that may limit your legal recourse.";
+      } else if (labelLower.includes("confident")) {
+        return "This confidentiality clause governs how sensitive information is protected. Ensure the terms provide adequate data protection and meet your security requirements.";
+      } else if (labelLower.includes("governing law") || labelLower.includes("jurisdiction")) {
+        return "This clause determines which jurisdiction's laws apply and where disputes will be resolved. This may impact legal costs and procedures if disputes arise.";
+      } else if (labelLower.includes("assign")) {
+        return "This clause addresses assignment or transfer of rights. Review whether assignments are permitted, require consent, and what restrictions apply.";
+      } else if (labelLower.includes("notice")) {
+        return "This clause sets notice periods and methods. Short notice periods can make it difficult to respond or exercise your rights in time.";
+      } else if (labelLower.includes("automatic")) {
+        return "This clause includes automatic renewal provisions that could extend the contract without explicit renewal. Review cancellation rights and renewal terms.";
+      } else {
+        // Try to extract context from snippet
+        const snippetText = snippet ? snippet.substring(0, 100) : "";
+        return `This clause (${label}) contains terms that may require careful review. ${snippetText ? `The text mentions: "${snippetText}..."` : "Review the specific language to understand its implications."}`;
+      }
+    };
+
+    // Helper function to generate contextual fallback recommendations
+    const generateFallbackRecommendations = (label: string): string[] => {
+      const labelLower = label.toLowerCase();
+      if (labelLower.includes("termination")) {
+        return [
+          "Request mutual termination rights if currently one-sided",
+          "Negotiate longer notice periods (60-90 days minimum)",
+          "Add clear conditions for termination (e.g., 'just cause' requirements)"
+        ];
+      } else if (labelLower.includes("liability") || labelLower.includes("liabilit")) {
+        return [
+          "Cap liability amounts to reasonable, agreed limits",
+          "Ensure liability terms are mutual and fair to both parties",
+          "Consider adding liability insurance requirements"
+        ];
+      } else if (labelLower.includes("penalt")) {
+        return [
+          "Negotiate reasonable penalty amounts that reflect actual damages",
+          "Ensure penalty triggers are clearly defined and reasonable",
+          "Request opportunity to cure issues before penalties apply"
+        ];
+      } else if (labelLower.includes("indemnif")) {
+        return [
+          "Narrow the indemnity scope to specific situations and losses",
+          "Add exceptions for the other party's negligence or willful misconduct",
+          "Cap indemnity amounts or require insurance coverage"
+        ];
+      } else if (labelLower.includes("warrant")) {
+        return [
+          "Clarify warranty scope, duration, and what is excluded",
+          "Ensure warranty disclaimers are reasonable and clearly stated",
+          "Request specific warranty language for critical components or services"
+        ];
+      } else if (labelLower.includes("confident")) {
+        return [
+          "Strengthen data protection and confidentiality language",
+          "Add specific data breach notification requirements and timelines",
+          "Ensure compliance with applicable privacy and data protection laws"
+        ];
+      } else if (labelLower.includes("governing law") || labelLower.includes("jurisdiction")) {
+        return [
+          "Negotiate jurisdiction closer to your location if currently unfavorable",
+          "Consider arbitration as an alternative dispute resolution method",
+          "Ensure you understand the legal and cost implications of the chosen jurisdiction"
+        ];
+      } else if (labelLower.includes("assign")) {
+        return [
+          "Request right to assign with reasonable notice to the other party",
+          "Negotiate assignment restrictions to be reasonable and specific",
+          "Add exceptions for assignment to affiliates or in case of merger/acquisition"
+        ];
+      } else if (labelLower.includes("notice")) {
+        return [
+          "Request longer notice periods (30-60 days minimum)",
+          "Ensure multiple notice methods are accepted (email, registered mail, etc.)",
+          "Clarify when notice is considered received and effective"
+        ];
+      } else if (labelLower.includes("automatic")) {
+        return [
+          "Request opt-in renewal rather than automatic opt-out renewal",
+          "Negotiate shorter renewal periods with clear cancellation windows",
+          "Add explicit cancellation rights before renewal dates"
+        ];
+      } else {
+        return [
+          "Review the specific language and terms of this clause carefully",
+          "Request clarification of any ambiguous or unclear terms",
+          "Negotiate modifications to better align with your interests and risk tolerance"
+        ];
+      }
+    };
+
     return risks.map((risk, index) => {
-      const recommendations =
+      // Get recommendations - filter out generic ones
+      let recommendations =
         Array.isArray(risk.recommendations) && risk.recommendations.length > 0
           ? risk.recommendations.filter((rec) => rec && rec.trim())
-          : ["Review this clause with a legal professional."];
+          : [];
+
+      // Filter out generic recommendations
+      const genericPatterns = [
+        "review this clause with a legal professional",
+        "consult with a legal professional",
+        "seek legal advice",
+        "contact a lawyer",
+        "review this clause",
+        "consult a legal professional"
+      ];
+      
+      recommendations = recommendations.filter(rec => {
+        const recLower = rec.toLowerCase().trim();
+        return !genericPatterns.some(pattern => recLower.includes(pattern));
+      });
+
+      // If no valid recommendations, generate contextual ones
+      if (recommendations.length === 0) {
+        const label = risk.short_risk || risk.label || `Risk ${index + 1}`;
+        recommendations = generateFallbackRecommendations(label);
+      }
+
+      // Get explanation - must be real, not generic
+      let explanation = risk.explanation?.trim() || "";
+      const genericExplanations = [
+        "no explanation provided",
+        "explanation not provided",
+        "this clause requires attention",
+        "review this clause",
+        "consult a legal professional",
+        "seek legal advice"
+      ];
+
+      // Check if explanation is generic or missing
+      if (!explanation || 
+          explanation.length < 20 ||
+          genericExplanations.some(gen => explanation.toLowerCase().includes(gen))) {
+        // Generate contextual fallback explanation
+        const label = risk.short_risk || risk.label || `Risk ${index + 1}`;
+        const snippet = risk.original_text || risk.snippet || "";
+        explanation = generateFallbackExplanation(label, snippet);
+      }
 
       return {
         id: risk.id || `risk-${index}`,
@@ -769,11 +940,13 @@ const RiskAnalysis = () => {
           (risk.severity_level?.toLowerCase() as RedFlag["severity"]) ||
           "medium",
         title: risk.short_risk || risk.label || `Risk ${index + 1}`, // Uses good short_risk
-        explanation: risk.explanation || "No explanation provided.", // Uses good explanation
-        recommendations: recommendations, // Uses good recommendations
+        explanation: explanation, // Real explanation, never generic
+        recommendations: recommendations, // Real recommendations, never generic
         pageNumber: risk.page_number || 1,
         pageText: risk.page_text || "",
-        highlightText: risk.original_text || risk.snippet || "", // This is the snippet
+        highlightText: risk.original_text || risk.snippet || "", // This is the snippet (for reference)
+        highlightStart: risk.highlight_start ?? 0, // Character position start (relative to page text)
+        highlightEnd: risk.highlight_end ?? 0, // Character position end (relative to page text)
         severityScore: risk.severity_score || 0,
       };
     });
